@@ -1,0 +1,22 @@
+column_mapping:
+  Balance: Balance
+  Branch Code: BranchCode
+  Credit: Credit
+  Debit: Debit
+  Description: Description
+  Particulars: Description
+  Ref No./Cheque No.: ReferenceNo
+  Txn Date: TransactionDate
+  Value Date: ValueDate
+fraud_rules:
+- description: Flag any transaction above 1 crore as potential fraud.
+  field: AbsAmount
+  operator: '>'
+  value: '10000000'
+- description: Flag all cash withdrawals.
+  field: Description
+  operator: contains
+  value: CASH WITHDRAWAL
+thresholds:
+  anomaly_score: 3
+  fraud_probability: 0.85
