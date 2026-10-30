@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brs-engine"
+version = "0.1.0"
+requires-python = ">=3.11"
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
+warn_return_any = true
+warn_unused_ignores = false
+
+[tool.flake8]
+max-line-length = 100
+
+[tool.pytest.ini_options]
+# Stress tests are heavy and need a live stack; deselect them by default so
+# the mandated `pytest tests/` run stays fast and stable. Run explicitly with
+# `pytest -m stress` (and RUN_STRESS=1) to include them.
+markers = [
+    "stress: high-volume load/stress tests, deselected by default",
+]
+addopts = "-m 'not stress'"
