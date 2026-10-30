@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#F9F6F0];
+  }
+}
+
+.gst-workbench {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  /* Fills the area below the navbar (App wraps views in a h-screen flex column). */
+  height: 100%;
+  overflow: hidden;
+}
+
+.gst-rail {
+  @apply bg-white border-r border-gray-200 overflow-y-auto;
+}
+
+.gst-panel {
+  @apply bg-[#F9F6F0] p-8 overflow-y-auto;
+}
+
+.fade-out-row {
+  animation: fadeOutCollapse 0.4s ease-out forwards;
+}
+
+@keyframes fadeOutCollapse {
+  0% {
+    opacity: 1;
+    transform: scaleY(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scaleY(0);
+    display: none;
+  }
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.chart-card {
+  @apply bg-white rounded-xl shadow-sm border border-gray-200 p-4 relative flex flex-col;
+}
+
+.chart-card-header {
+  @apply flex justify-between items-start mb-2 pb-2 border-b border-gray-100;
+}
+
+.chart-card-title {
+  @apply text-sm font-serif font-bold text-gray-800 flex items-center gap-2;
+}
+
+.chart-container {
+  /* min-h-0/min-w-0 let the flex child shrink inside the fixed-height card
+     instead of forcing overflow; ChartCard adds the overflow-hidden guard. */
+  @apply flex-grow w-full h-full min-h-0 min-w-0;
+}
+
+/* Recharts computes an inline width for the legend wrapper from its content,
+   which collapses to a one-item-wide column for long labels; force it to the
+   full chart width so legend entries flow horizontally inside their card. */
+.chart-container .recharts-legend-wrapper {
+  width: 100% !important;
+  left: 0 !important;
+}
+
+/* ── PDF export (window.print) ──────────────────────────────────────────
+   The on-screen shell is a fixed-viewport app (h-screen + overflow-hidden
+   everywhere); print needs the opposite: natural document flow so all nine
+   cards and the summary rail paginate. Charts keep their palette via
+   print-color-adjust. */
+@media print {
+  header,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  .app-shell,
+  .app-shell > div,
+  .gst-workbench,
+  .gst-rail,
+  .gst-panel {
+    display: block !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .gst-rail {
+    border: none !important;
+    margin-bottom: 1rem;
+  }
+
+  .analysis-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .chart-card {
+    break-inside: avoid;
+    page-break-inside: avoid;
+    box-shadow: none !important;
+  }
+
+  * {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}
