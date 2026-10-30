@@ -1,0 +1,4 @@
+metric,transaction_count,total_amount_rupees
+Matched Transactions,1250,15420000.00
+Unmatched Bank Transactions,120,2818000.00
+Unmatched Ledger Transactions,240,6405500.00
