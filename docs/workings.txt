@@ -1,0 +1,117 @@
+1. COMPREHENSIVE FILE STRUCTURE ARCHITECTURE
+--------------------------------------------------
+[SOURCE-DIRECTORY]/
+|-- docker-compose.yml             # Development Docker stack definition (API, DB, Cache, Worker)
+|-- docker-compose.prod.yml        # Production stack adding Nginx, Prometheus, and Grafana
+|-- Dockerfile.prod                # Multi-stage production build for backend services
+|-- Dockerfile.client              # Isolated Nginx serving statically compiled Vite frontend
+|-- launch.py                      # Master bootstrap script with auto-SQL-handshake and subsystem booting
+|-- requirements.txt               # Backend Python dependencies (FastAPI, Celery, Polars, scikit-learn, etc)
+|-- pyproject.toml                 # Tool configurations (Mypy, Ruff strict checks)
+|-- alembic.ini                    # Database migration configuration pointer
+|-- pytest.ini                     # Pytest behavior definitions
+|-- ROADMAP.md                     # Engineering scaling guidelines & history
+|-- README.md                      # High-level architecture and startup instructions
+|
+|-- offline/                       # Air-gapped deployment artifacts bundle
+|   |-- config/
+|   |   |-- docker-compose.offline.yml # Stack definitions for pre-packaged offline deployments
+|   |   |-- .env.template          # Blank environment keys injected dynamically
+|   |   |-- prometheus.yml         # Metric scraping configuration
+|   |-- docker-images/             # Directory containing offline .tar exported Docker container images
+|   |-- scripts/
+|   |   |-- bootstrap.ps1          # Windows PowerShell 1-click installer for on-prem networks
+|   |   |-- bootstrap.sh           # Linux bash equivalent for server room deployment
+|
+|-- scripts/                       # Maintenance and simulation utilities
+|   |-- bundle_offline.py          # Builds and archives the offline/ tarballs natively
+|   |-- generate_mock_scale.py     # Generates synthetic CSV data for testing (up to 500k rows)
+|   |-- run_scale_validation.py    # Memory ceiling and peak RSS execution profile checker
+|   |-- create_test_data.py        # Bootstraps minimal DB rows for functional testing
+|
+|-- src/                           # Primary Application Source Code
+|   |-- api/                       # Presentation & Routing Layer
+|   |   |-- main.py                # FastAPI ASGI gateway, rate limiting, and HTTP endpoints
+|   |   |-- routes/                # Specific controller logic (auth, upload, dashboard)
+|   |
+|   |-- db/                        # Persistence & State Management
+|   |   |-- models.py              # SQLAlchemy Core table schemas (audit_jobs, transactions, rules)
+|   |   |-- session.py             # PgBouncer-compatible connection pool logic
+|   |   |-- batch_claim.py         # Advanced row-locking (SKIP LOCKED) for concurrent processing
+|   |   |-- dlq.py                 # Dead Letter Queue error isolation writer
+|   |
+|   |-- features/                  # ML Feature Engineering
+|   |   |-- extractor.py           # NLP parsing (spaCy) and TF-IDF matrix generation
+|   |
+|   |-- matching/                  # Deterministic BRS Rules
+|   |   |-- engine.py              # Subset-sum accounting algorithms and UTR regex matching
+|   |
+|   |-- ml/                        # Statistical & Anomaly Inference Models
+|   |   |-- models.py              # Wrappers for Isolation Forest, LightGBM, and DBSCAN
+|   |
+|   |-- polars_ops/                # Big-Data Ingestion Pipeline
+|   |   |-- ingestion.py           # High-speed CSV parsing, type casting, schema validation
+|   |   |-- schema_validation.py   # Strict data type enforcement checks
+|   |
+|   |-- storage/                   # Compliance & Security
+|   |   |-- encryption.py          # File-level AES-128 Fernet cipher routines
+|   |
+|   |-- tasks/                     # Asynchronous Celery Workers
+|   |   |-- inference.py           # Dispatches ML scoring against committed chunks
+|   |   |-- ingestion.py           # The heavy data insertion background worker
+|   |   |-- retrain.py             # Nightly execution to update LightGBM models against schema drift
+|   |
+|   |-- celery_app.py              # Task broker configuration, dynamic CPU allocation limits
+|
+|-- tests/                         # Pytest Suite (170+ Unit, Integration, & Chaos validations)
+|-- var/data/                      # Local volume mount for securely encrypted user uploads
+
+
+2. SYSTEM MECHANICS & ELABORATED PIPELINES
+--------------------------------------------------
+Overview:
+The BRS (Bank Reconciliation Subsystem) is designed to operate on severely resource-constrained on-premise hardware (e.g., 4GB RAM) while seamlessly processing individual CSV files exceeding 200,000 to 500,000 rows. This is achieved via a strictly decoupled, highly asynchronous, memory-bounded batching architecture.
+
+A. Subsystem Architecture Details
+1. Web API Layer (FastAPI & Uvicorn)
+   - Operates purely as an HTTP traffic controller and job router.
+   - Files are accepted via Multi-Part form data, immediately encrypted securely on disk, and registered in the `audit_jobs` PostgreSQL table with a `QUEUED` state.
+   - An asynchronous ID pointing to the payload is sent to Redis, and the API responds instantly to the client to prevent HTTP timeouts.
+
+2. Distributed Message Queue (Redis & Celery)
+   - Redis acts as a fast, in-memory FIFO queue brokering messages between the Web Layer and the Worker Layer.
+   - Celery operates dynamically: on startup (`src/celery_app.py`), it profiles the host OS, reserves cores for the DB and HTTP layers, and spawns the exact maximum safe number of worker sub-processes. 
+
+3. Data Ingestion Engine (Polars & SQLAlchemy)
+   - Using Polars LazyFrames, the system avoids loading the entire 200,000-row CSV into RAM.
+   - The file is chunked into logical batches. Each batch undergoes rigorous data cleaning (e.g., removing nulls, converting floating-point currency to exact Paisa integers to prevent floating-point drift).
+   - Rows are written into PostgreSQL using concurrent-safe batch inserts.
+
+4. Deterministic Reconciliation Engine
+   - A rules-based engine (`src/matching/`) applies hard-coded accounting logic.
+   - Evaluates Exact UTR (Unique Transaction Reference) string matches, 1:N Settlement matches (Subset Sum matching), and Temporal date-window bounds (±3 days).
+   - Any transaction definitively matched to a ledger entry is flagged and isolated from the ML phase.
+
+5. Machine Learning Inference Pipeline
+   - Unmatched transactions are sent to `src/tasks/inference.py`.
+   - Feature Engineering: Uses spaCy to tokenize transaction narratives, creating sparse TF-IDF matrices mapping word frequencies.
+   - Ensemble Outlier Detection:
+      - Isolation Forest: Identifies transactions whose feature densities vastly differ from the norm.
+      - DBSCAN: Clusters identical recurring transactions (like monthly rent) and isolates rare, un-clustered points.
+      - Z-Score: Computes statistical deviation of the numerical Paisa amounts.
+   - Results are blended into a unified risk probability metric and pushed back to the client database.
+
+6. Reliability, Safety, & DLQ Mitigation
+   - Concurrency Safety: Multiple Celery workers safely query PostgreSQL using `SELECT FOR UPDATE SKIP LOCKED`, guaranteeing that no two workers ever process the same row.
+   - Dead Letter Queue (DLQ): If a chunk contains severely corrupted schema data that crashes the parser, the exception is intercepted by `src/db/dlq.py`. The original raw payload, stack trace, and worker ID are cleanly written to the `dlq_transactions` table, allowing the worker to instantly recover and continue processing the rest of the queue without human intervention.
+
+
+3. SECURITY, TENANCY & SENSITIVE STRING MITIGATION
+--------------------------------------------------
+- Multi-Tenant Isolation:
+  - The database is shared, but strict logical partitions exist via the `job_id` UUID constraint on every transaction.
+  - Foreign Keys rigorously enforce that Bank rows can only map to Ledger rows owned by the same unique tenant Audit Job.
+- Secret Management:
+  - Hardcoded strings are strictly forbidden. Connection credentials for Postgres (`DATABASE_URL`) and Redis (`REDIS_BROKER_URL`) are dynamically injected via `.env` files.
+  - File payloads are protected by symmetric AES encryption (`FERNET_KEY`), ensuring any offline snapshot of the filesystem is completely unreadable without the ephemeral session key.
+- The project identifier formerly known as "bank-statement" is fully aliased as `data-ingestion-engine` across production deployments.
