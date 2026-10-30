@@ -1,0 +1,96 @@
+version: '3.8'
+
+services:
+  brs_postgres:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: brs_user
+      POSTGRES_PASSWORD: brs_password
+      POSTGRES_DB: brs_db
+    volumes:
+      - postgres_data_prod:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  brs_redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis_data_prod:/data
+    ports:
+      - "6379:6379"
+
+  brs_web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: always
+    ports:
+      - "8000:8000"
+    depends_on:
+      - brs_postgres
+      - brs_redis
+    environment:
+      - DATABASE_URL=postgresql://brs_user:brs_password@brs_postgres:5432/brs_db
+      - CELERY_BROKER_URL=redis://brs_redis:6379/0
+      - POSTGRES_RESULT_BACKEND_URL=postgresql://brs_user:brs_password@brs_postgres:5432/brs_db
+
+  brs_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: always
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info"]
+    depends_on:
+      - brs_postgres
+      - brs_redis
+    environment:
+      - DATABASE_URL=postgresql://brs_user:brs_password@brs_postgres:5432/brs_db
+      - CELERY_BROKER_URL=redis://brs_redis:6379/0
+      - POSTGRES_RESULT_BACKEND_URL=postgresql://brs_user:brs_password@brs_postgres:5432/brs_db
+
+  brs_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    restart: always
+    command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+    depends_on:
+      - brs_redis
+      - brs_worker
+    environment:
+      - DATABASE_URL=postgresql://brs_user:brs_password@brs_postgres:5432/brs_db
+      - CELERY_BROKER_URL=redis://brs_redis:6379/0
+      - POSTGRES_RESULT_BACKEND_URL=postgresql://brs_user:brs_password@brs_postgres:5432/brs_db
+
+  brs_prometheus:
+    image: prom/prometheus:latest
+    restart: always
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data_prod:/prometheus
+    ports:
+      - "9090:9090"
+
+  brs_grafana:
+    image: grafana/grafana:latest
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data_prod:/var/lib/grafana
+
+  brs_celery_exporter:
+    image: danihodovic/celery-exporter:latest
+    restart: always
+    environment:
+      - CELERY_BROKER_URL=redis://brs_redis:6379/0
+    ports:
+      - "9808:9808"
+
+volumes:
+  postgres_data_prod:
+  redis_data_prod:
+  prometheus_data_prod:
+  grafana_data_prod:

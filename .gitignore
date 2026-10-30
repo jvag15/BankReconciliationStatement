@@ -1,0 +1,44 @@
+# Python & Environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.env.local
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Docker & Containers
+.dockerignore
+
+# IDE & OS
+.vscode/
+.ruff_cache/
+.DS_Store
+Thumbs.db
+
+# Build & Dependencies
+node_modules/
+dist/
+build/
+*.exe
+*.bat
+*.log
+
+# Data & Sensitive
+secret.key
+*.csv
+!sample_sbi_bank_statement.csv
+!reconciliation_summary.csv
+*.xlsx
+*.pkl
+*.enc
+logs/
+output/
+data/
+var/uploads/*
+!var/uploads/.gitkeep
+var/models/*
+exports/

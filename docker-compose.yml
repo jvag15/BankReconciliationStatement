@@ -1,0 +1,107 @@
+services:
+  brs_postgres:
+    image: postgres:15-alpine
+    container_name: brs_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: brs_user
+      POSTGRES_PASSWORD: brs_password
+      POSTGRES_DB: brs_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  brs_redis:
+    image: redis:7-alpine
+    container_name: brs_redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  brs_web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_AUTH_TOKEN=${API_AUTH_TOKEN:-dev-token}
+    container_name: brs_web
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://brs_user:brs_password@brs_postgres:5432/brs_db
+      - APP_SLUG=brs_engine
+      # Encrypted upload spool inside the shared ./var mount, so brs_worker
+      # reads back exactly what brs_web writes. Must match brs_worker.
+      - STORAGE_DIR=/app/var/uploads
+      - MODEL_DIR=/app/var/models
+      # Local/dev stress capability: production leaves this unset -> the code
+      # default of "10/minute" applies. Raised here so the load harness can
+      # drive the ingest API without tripping the rate limiter.
+      - INGEST_RATE_LIMIT=100000/minute
+    ports:
+      - "8000:8000"
+    depends_on:
+      - brs_postgres
+      - brs_redis
+    volumes:
+      # Mount source dirs individually. A blanket ".:/app" would shadow the
+      # ./static directory that the frontend-builder stage bakes into the image.
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./tests:/app/tests
+      - ./scripts:/app/scripts
+      # Encrypted upload spool. MUST be shared with brs_worker: the API
+      # writes the ciphertext here and the worker reads it back by path.
+      - ./var:/app/var
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  brs_worker:
+    build: .
+    container_name: brs_worker
+    # -B runs the embedded beat scheduler in-process so beat_schedule entries
+    # (nightly retrain, DLQ recovery scan) actually fire. Acceptable for a
+    # single-worker deployment; a dedicated beat service is preferable at scale.
+    command: [ "celery", "-A", "app.celery_app", "worker", "-B", "-Q", "ingestion,retrain,ml_predict", "--loglevel=info" ]
+    env_file:
+      - .env
+    environment:
+      - API_URL=http://brs_web:8000
+      - DATABASE_URL=postgresql://brs_user:brs_password@brs_postgres:5432/brs_db
+      # Must match brs_web so both containers resolve the same shared spool.
+      - STORAGE_DIR=/app/var/uploads
+      - MODEL_DIR=/app/var/models
+    depends_on:
+      - brs_postgres
+      - brs_redis
+      - brs_web
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./scripts:/app/scripts
+      # Shared with brs_web — see the note on that service.
+      - ./var:/app/var
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # Removed brs_prometheus, brs_grafana, brs_celery_exporter per directive
+
+volumes:
+  pgdata:
+  redis_data:
